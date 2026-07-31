@@ -1,0 +1,99 @@
+﻿@{
+    ViewData["Title"] = "Home Page";
+}
+
+<div class="text-center">
+    <h1 class="display-4">Welcome</h1>
+    <p>test ok </a>.</p>
+</div>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Login</title>
+    <!-- Bootstrap 5 CSS CDN -->
+    <link href="https://jsdelivr.net" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .auth-card {
+            max-width: 400px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container min-vh-100 d-flex align-items-center justify-content-center">
+    <div class="card auth-card shadow-sm p-4 bg-white rounded">
+        <div class="card-body">
+            
+            <!-- Header Section -->
+            <div class="text-center mb-4">
+                <h2 class="fw-bold text-dark">Welcome Back</h2>
+                <p class="text-muted small">Please enter your credentials to log in</p>
+            </div>
+
+            <!-- Authentication Form -->
+            <form action="/Account/Login" method="POST" class="needs-validation" novalidate>    
+                <!-- Email Input Component -->
+                <div class="mb-3">
+                    <label for="userEmail" class="form-label text-secondary small fw-semibold">Email Address</label>
+                    <input type="email" class="form-control" id="userEmail" name="email" required placeholder="name@example.com">
+                    <div class="invalid-feedback">Please enter a valid email address.</div>
+                </div>
+
+                <!-- Password Input Component -->
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <label for="userPassword" class="form-label text-secondary small fw-semibold mb-0">Password</label>
+                        <a href="/forgot-password" class="text-decoration-none small">Forgot?</a>
+                    </div>
+                    <input type="password" class="form-control mt-1" id="userPassword" name="password" required minlength="8">
+                    <div class="invalid-feedback">Password must be at least 8 characters long.</div>
+                </div>
+
+                <!-- Remember Me Checkbox -->
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="rememberMe" name="remember">
+                    <label class="form-check-label text-muted small" for="rememberMe">Keep me logged in</label>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold" <!--value=calculate onClick="calc()"-->>Sign In</button>
+                
+            </form>
+
+            <!-- Registration Footer Link -->
+            <div class="text-center mt-4">
+                <p class="text-muted small mb-0">Don't have an account? <a href="/register" class="text-decoration-none fw-semibold">Sign up</a></p>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- Bootstrap 5 Client-Side Validation Script -->
+<script>
+    (() => {
+        'use strict'
+        const forms = document.querySelectorAll('.needs-validation')
+        Array.from(forms).forEach(form => {
+            form.addEventListener('submit', event => {
+                if (!form.checkValidity()) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                }
+                form.classList.add('was-validated')
+            }, false)
+        })
+    })()
+</script>
+
+<!-- Bootstrap 5 Bundle JS CDN -->
+<script src="https://jsdelivr.net"></script>
+</body>
+</html>
