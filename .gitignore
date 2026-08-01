@@ -1,0 +1,8 @@
+obj/
+bin/
+.idea/
+.vscode/
+wwwroot/lib/
+launchSettings.json
+*.dll
+*.exe
