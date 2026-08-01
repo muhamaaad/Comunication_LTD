@@ -1,3 +1,4 @@
+using SecurityWebApp.Helpers;
 using SecurityWebApp.Data;
 using SecurityWebApp.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -54,9 +55,18 @@ public class AccountController : Controller
             return View();
         }
 
-        if (password.Length < 8)
+        // Use PasswordManager for complex validation
+        var passwordManager = new PasswordManager();
+        if (!passwordManager.IsPasswordStrong(password, out string validationError))
         {
-            ViewBag.Error = "Password must be at least 8 characters";
+            ViewBag.Error = validationError;
+            return View();
+        }
+
+        // Validate email format
+        if (!IsValidEmail(email))
+        {
+            ViewBag.Error = "Invalid email format";
             return View();
         }
 
@@ -75,8 +85,20 @@ public class AccountController : Controller
         _context.Users.Add(user);
         _context.SaveChanges();
 
-        ViewBag.Success = "Registration successful! You can now login.";
         return RedirectToAction("Login");
+    }
+
+    private bool IsValidEmail(string email)
+    {
+        try
+        {
+            var addr = new System.Net.Mail.MailAddress(email);
+            return addr.Address == email;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
 /*
