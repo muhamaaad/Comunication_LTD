@@ -1,4 +1,7 @@
+
 using System.Security.Cryptography;
+
+namespace SecurityWebApp.Helpers;
 public class PasswordHash
 {
     public const int SaltByteSize = 24;

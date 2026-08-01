@@ -1,8 +1,45 @@
-obj/
-bin/
-.idea/
-.vscode/
+
 wwwroot/lib/
 launchSettings.json
+
+*.md
+# Build folders
+bin/
+obj/
+.vs/
+
+# User settings
+*.user
+*.userosscache
+
+# Connection strings (sensitive)
+appsettings.json
+
+# User secrets
+secrets.json
+
+# LocalDB/SQL files
+*.mdf
+*.ldf
+
+# Environment files
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
 *.dll
 *.exe
+
+# Migrations (optional - uncomment if you want to exclude)
+# Migrations/
+
+# NuGet
+*.nupkg
