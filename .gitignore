@@ -42,4 +42,5 @@ Thumbs.db
 # Migrations/
 
 # NuGet
-*.nupkg
+*.nupkg.idea/
+*.iml
