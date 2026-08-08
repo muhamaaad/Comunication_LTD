@@ -43,3 +43,4 @@ Thumbs.db
 
 # NuGet
 *.nupkg
+SecurityWebApp/obj/*
