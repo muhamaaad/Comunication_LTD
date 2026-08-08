@@ -17,6 +17,7 @@ public class AccountController : Controller
     [HttpGet]
     public IActionResult Login()
     {
+        ViewBag.Success = TempData["Success"];
         return View();
     }
 
@@ -85,6 +86,137 @@ public class AccountController : Controller
         _context.Users.Add(user);
         _context.SaveChanges();
 
+        return RedirectToAction("Login");
+    }
+
+    [HttpGet]
+    public IActionResult ForgotPassword()
+    {
+        return View();
+    }
+
+    [HttpPost]
+    public IActionResult ForgotPassword(string identifier)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            ViewBag.Error = "Email or username is required";
+            return View();
+        }
+
+        var user = _context.Users.FirstOrDefault(u => u.Email == identifier);
+        if (user == null)
+        {
+            ViewBag.Error = "No account was found with this email or username";
+            return View();
+        }
+
+        var resetToken = new PasswordResetToken
+        {
+            UserId = user.Id,
+            ResetToken = ResetCodeGenerator.GenerateSha1Code(),
+            Expiration = DateTime.UtcNow.AddMinutes(15),
+            Used = false
+        };
+
+        _context.PasswordResetTokens.Add(resetToken);
+        _context.SaveChanges();
+
+        TempData["Success"] = "Code sent successfully!";
+        TempData["ResetCode"] = resetToken.ResetToken;
+        return RedirectToAction("VerifyResetCode");
+    }
+
+    [HttpGet]
+    public IActionResult VerifyResetCode()
+    {
+        ViewBag.Success = TempData["Success"];
+        ViewBag.ResetCode = TempData["ResetCode"];
+        return View();
+    }
+
+    [HttpPost]
+    public IActionResult VerifyResetCode(string resetCode)
+    {
+        if (string.IsNullOrWhiteSpace(resetCode))
+        {
+            ViewBag.Error = "Verification code is required";
+            return View();
+        }
+
+        var token = _context.PasswordResetTokens.FirstOrDefault(t =>
+            t.ResetToken == resetCode.Trim().ToLower() && !t.Used);
+
+        if (token == null || token.Expiration < DateTime.UtcNow)
+        {
+            ViewBag.Error = "Invalid or expired verification code";
+            return View();
+        }
+
+        HttpContext.Session.SetInt32("ResetUserId", token.UserId);
+        HttpContext.Session.SetInt32("ResetTokenId", token.Id);
+
+        return RedirectToAction("ResetPassword");
+    }
+
+    [HttpGet]
+    public IActionResult ResetPassword()
+    {
+        if (HttpContext.Session.GetInt32("ResetUserId") == null)
+        {
+            return RedirectToAction("ForgotPassword");
+        }
+
+        return View();
+    }
+
+    [HttpPost]
+    public IActionResult ResetPassword(string newPassword, string confirmPassword)
+    {
+        var userId = HttpContext.Session.GetInt32("ResetUserId");
+        var tokenId = HttpContext.Session.GetInt32("ResetTokenId");
+
+        if (userId == null || tokenId == null)
+        {
+            return RedirectToAction("ForgotPassword");
+        }
+
+        if (string.IsNullOrWhiteSpace(newPassword) || string.IsNullOrWhiteSpace(confirmPassword))
+        {
+            ViewBag.Error = "New password and confirmation are required";
+            return View();
+        }
+
+        if (newPassword != confirmPassword)
+        {
+            ViewBag.Error = "Passwords do not match";
+            return View();
+        }
+
+        var passwordManager = new PasswordManager();
+        if (!passwordManager.IsPasswordStrong(newPassword, out string validationError))
+        {
+            ViewBag.Error = validationError;
+            return View();
+        }
+
+        var user = _context.Users.FirstOrDefault(u => u.Id == userId.Value);
+        var token = _context.PasswordResetTokens.FirstOrDefault(t => t.Id == tokenId.Value && !t.Used);
+
+        if (user == null || token == null || token.Expiration < DateTime.UtcNow)
+        {
+            ViewBag.Error = "Password reset session is invalid or expired";
+            return View();
+        }
+
+        user.PasswordHash = PasswordHash.HashPassword(newPassword);
+        token.Used = true;
+        _context.SaveChanges();
+
+        HttpContext.Session.Remove("ResetUserId");
+        HttpContext.Session.Remove("ResetTokenId");
+
+        TempData["Success"] = "Password reset successfully. You can now log in.";
         return RedirectToAction("Login");
     }
 
