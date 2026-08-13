@@ -24,14 +24,48 @@ public class AccountController : Controller
     [HttpPost]
     public IActionResult Login(string email, string password)
     {
+        if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
+        {
+            ViewBag.Error = "Email and password are required.";
+            return View();
+        }
+
         var user = _context.Users.FirstOrDefault(u => u.Email == email);
 
+        if (user == null)
+        {
+            ViewBag.Error = "Invalid email or password.";
+            return View();
+        }
+
+        // Check if account is locked
+        var loginAttemptManager = new LoginAttemptManager(_context);
+        if (loginAttemptManager.IsAccountLocked(user))
+        {
+            ViewBag.Error = $"Account is locked. Try again after 15 minutes.";
+            return View();
+        }
+
+        // Verify password
         if (user != null && PasswordHash.ValidatePassword(password, user.PasswordHash))
         {
+            // Login successful - reset attempts
+            loginAttemptManager.ResetAttempts(user);
             return RedirectToAction("Index", "Home");
         }
 
-        ViewBag.Error = "Invalid email or password";
+        // Password is wrong - record failed attempt
+        loginAttemptManager.RecordFailedAttempt(user);
+        
+        int remainingAttempts = 3 - user.LoginAttempts;
+        if (remainingAttempts > 0)
+        {
+            ViewBag.Error = $"Invalid password. {remainingAttempts} attempts remaining.";
+        }
+        else
+        {
+            ViewBag.Error = "Account locked due to too many failed login attempts.";
+        }
         return View();
     }
 
@@ -80,7 +114,9 @@ public class AccountController : Controller
         var user = new User
         {
             Email = email,
-            PasswordHash = PasswordHash.HashPassword(password)
+            PasswordHash = PasswordHash.HashPassword(password),
+            LoginAttempts = 0,
+            IsLocked = false
         };
 
         _context.Users.Add(user);
@@ -233,6 +269,7 @@ public class AccountController : Controller
         }
     }
 }
+
 /*
 public class AccountController : Controller
 {
