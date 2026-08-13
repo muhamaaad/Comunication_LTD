@@ -9,6 +9,8 @@ public class ApplicationDbContext : DbContext
         : base(options) { }
 
     public DbSet<User> Users { get; set; }
+    public DbSet<PasswordResetToken> PasswordResetTokens { get; set; }
+}
     public DbSet<PasswordHistory> PasswordHistories { get; set; }
 
 }
