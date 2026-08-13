@@ -207,6 +207,7 @@ public class AccountController : Controller
     }
 
     [HttpPost]
+    [ValidateAntiForgeryToken]
     public IActionResult ResetPassword(string newPassword, string confirmPassword)
     {
         var userId = HttpContext.Session.GetInt32("ResetUserId");
