@@ -72,10 +72,7 @@ public class SystemController : Controller
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
 
-        var emailForLog = (user.Email ?? string.Empty)
-            .Replace("\r", string.Empty)
-            .Replace("\n", string.Empty);
-        _logger.LogInformation("Created user {Email} (id {Id})", emailForLog, user.Id);
+        _logger.LogInformation("Created user with id {Id}", user.Id);
         TempData["Success"] = $"User {email} created.";
         return RedirectToAction(nameof(Screen));
     }
