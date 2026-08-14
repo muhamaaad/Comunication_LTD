@@ -42,5 +42,7 @@ Thumbs.db
 # Migrations/
 
 # NuGet
+*.nupkg
+SecurityWebApp/obj/*
 *.nupkg.idea/
 *.iml
