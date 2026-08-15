@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SecurityWebApp.Data;
 
@@ -10,12 +11,46 @@ using SecurityWebApp.Data;
 namespace SecurityWebApp.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260814151525_InitialCreate")]
+    partial class InitialCreate
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.0");
+
+            modelBuilder.Entity("SecurityWebApp.Models.Customer", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CreatedByUserId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.ToTable("Customers");
+                });
 
             modelBuilder.Entity("SecurityWebApp.Models.PasswordHistory", b =>
                 {
@@ -28,6 +63,7 @@ namespace SecurityWebApp.Migrations
 
                     b.Property<string>("PasswordHash")
                         .IsRequired()
+                        .HasMaxLength(255)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("UserId")
@@ -51,6 +87,7 @@ namespace SecurityWebApp.Migrations
 
                     b.Property<string>("ResetToken")
                         .IsRequired()
+                        .HasMaxLength(40)
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("Used")
@@ -60,6 +97,9 @@ namespace SecurityWebApp.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ResetToken")
+                        .IsUnique();
 
                     b.HasIndex("UserId");
 
@@ -77,12 +117,17 @@ namespace SecurityWebApp.Migrations
 
                     b.Property<string>("Email")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
 
                     b.Property<bool>("IsLocked")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("LastFailedLoginAttempt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastLogin")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("LockedUntil")
@@ -93,38 +138,47 @@ namespace SecurityWebApp.Migrations
 
                     b.Property<string>("PasswordHash")
                         .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(20)
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
+                    b.HasIndex("Email")
+                        .IsUnique();
+
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("SecurityWebApp.Models.Customer", b =>
+                {
+                    b.HasOne("SecurityWebApp.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("SecurityWebApp.Models.PasswordHistory", b =>
                 {
-                    b.HasOne("SecurityWebApp.Models.User", "User")
-                        .WithMany("PasswordHistories")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("SecurityWebApp.Models.PasswordResetToken", b =>
-                {
-                    b.HasOne("SecurityWebApp.Models.User", "User")
+                    b.HasOne("SecurityWebApp.Models.User", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("User");
                 });
 
-            modelBuilder.Entity("SecurityWebApp.Models.User", b =>
+            modelBuilder.Entity("SecurityWebApp.Models.PasswordResetToken", b =>
                 {
-                    b.Navigation("PasswordHistories");
+                    b.HasOne("SecurityWebApp.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

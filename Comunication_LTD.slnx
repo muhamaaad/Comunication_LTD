@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="SecurityWebApp/SecurityWebApp.csproj" />
+  <Project Path="SecurityWebApp_v2/SecurityWebApp_v2.csproj" />
+</Solution>

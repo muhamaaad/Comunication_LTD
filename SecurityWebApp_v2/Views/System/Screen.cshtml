@@ -1,0 +1,392 @@
+@inject SecurityWebApp.Helpers.PasswordManager PasswordManager
+@model IEnumerable<SecurityWebApp.Models.User>
+@{
+    ViewData["Title"] = "System screen";
+
+    var users = Model.ToList();
+    var rules = PasswordManager.Rules;
+    var query = ViewBag.Query as string;
+    var page = (int)ViewBag.Page;
+    var totalPages = (int)ViewBag.TotalPages;
+    var matching = (int)ViewBag.Matching;
+    var administratorCount = (int)ViewBag.AdministratorCount;
+    var currentUserId = ViewBag.CurrentUserId as int?;
+}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+        <div class="d-flex align-items-center gap-2">
+            <h1 class="h3 fw-bold mb-0">System screen</h1>
+            <span class="badge text-bg-danger">Admin only</span>
+        </div>
+        <p class="text-muted small mb-0 mt-1">Manage users, roles and the password policy.</p>
+    </div>
+    <div class="text-end">
+        <div class="small fw-semibold text-secondary">Signed in as</div>
+        <div class="text-muted small">@User.Identity!.Name</div>
+    </div>
+</div>
+
+@if (TempData["Success"] != null)
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @TempData["Success"]
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+}
+@if (TempData["Error"] != null)
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        @TempData["Error"]
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+}
+
+<div class="d-flex align-items-center gap-3 small text-muted mb-3">
+    <span><strong class="text-dark">@ViewBag.TotalUsers</strong> users</span>
+    <span class="text-black-50">&bull;</span>
+    <span><strong class="text-dark">@administratorCount</strong> administrator(s)</span>
+    <span class="text-black-50">&bull;</span>
+    <span><strong class="text-danger">@ViewBag.LockedUsers</strong> locked</span>
+    <span class="text-black-50">&bull;</span>
+    <span><strong class="text-dark">@ViewBag.NewThisWeek</strong> new this week</span>
+</div>
+
+<ul class="nav nav-pills gap-2 mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#users" type="button" role="tab">Users</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#create" type="button" role="tab">Create user</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#policy" type="button" role="tab">Password policy</button>
+    </li>
+</ul>
+
+<div class="tab-content">
+
+    <div class="tab-pane fade show active" id="users" role="tabpanel">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h2 class="h6 fw-semibold mb-0">All users</h2>
+                <form asp-action="Screen" method="get" class="d-flex gap-2">
+                    <input type="search" class="form-control form-control-sm search-input" name="q" value="@query"
+                           placeholder="Search by email...">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Search</button>
+                </form>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th class="col-id">ID</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Created</th>
+                            <th class="text-center">Failed attempts</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var u in users)
+                        {
+                            var isSelf = currentUserId == u.Id;
+                            var isLastAdministrator = u.Role == UserRole.Administrator && administratorCount == 1;
+
+                            <tr>
+                                <td class="text-muted">@u.Id</td>
+                                <td>
+                                    <div class="fw-semibold">
+                                        @u.Email
+                                        @if (isSelf)
+                                        {
+                                            <span class="badge text-bg-light border ms-1">you</span>
+                                        }
+                                    </div>
+                                    @if (u.IsLocked)
+                                    {
+                                        <div class="text-danger small">
+                                            Locked@(u.LockedUntil.HasValue
+                                                ? " until " + u.LockedUntil.Value.ToLocalTime().ToString("HH:mm")
+                                                : "")
+                                        </div>
+                                    }
+                                </td>
+                                <td>
+                                    @if (isSelf || isLastAdministrator)
+                                    {
+                                        <span class="badge @(u.Role == UserRole.Administrator ? "text-bg-danger" : "text-bg-secondary")">@u.Role</span>
+                                        @if (isLastAdministrator && !isSelf)
+                                        {
+                                            <div class="text-muted small">Last administrator</div>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <form asp-action="SetRole" method="post" class="d-inline js-autosubmit">
+                                            <input type="hidden" name="id" value="@u.Id" />
+                                            <select name="role" class="form-select form-select-sm role-select"
+                                                    aria-label="Role for @u.Email">
+                                                <option value="@UserRole.User" selected="@(u.Role == UserRole.User)">User</option>
+                                                <option value="@UserRole.Administrator" selected="@(u.Role == UserRole.Administrator)">Administrator</option>
+                                            </select>
+                                        </form>
+                                    }
+                                </td>
+                                <td class="text-muted small">@u.CreatedAt.ToLocalTime().ToString("dd MMM yyyy")</td>
+                                <td class="text-center">
+                                    @if (u.LoginAttempts >= rules.LoginAttemptLimit)
+                                    {
+                                        <span class="text-danger fw-semibold">@u.LoginAttempts</span>
+                                    }
+                                    else if (u.LoginAttempts > 0)
+                                    {
+                                        <span class="text-warning fw-semibold">@u.LoginAttempts</span>
+                                    }
+                                    else
+                                    {
+                                        @u.LoginAttempts
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    @if (u.IsLocked)
+                                    {
+                                        <form asp-action="Unlock" method="post" class="d-inline">
+                                            <input type="hidden" name="id" value="@u.Id" />
+                                            <button type="submit" class="btn btn-sm btn-outline-primary">Unlock</button>
+                                        </form>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="btn btn-sm btn-outline-secondary js-edit"
+                                                data-id="@u.Id" data-email="@u.Email">Edit</button>
+                                    }
+                                    @if (!isSelf && !isLastAdministrator)
+                                    {
+                                        <form asp-action="Delete" method="post" class="d-inline"
+                                              data-confirm="Delete @u.Email?">
+                                            <input type="hidden" name="id" value="@u.Id" />
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                        </form>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @if (users.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="6" class="text-center text-muted py-4">
+                                    No users matched. Use the <strong>Create user</strong> tab to add one.
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+                <span class="text-muted small">Showing @users.Count of @matching users</span>
+                <nav>
+                    <ul class="pagination pagination-sm mb-0">
+                        <li class="page-item @(page <= 1 ? "disabled" : "")">
+                            <a class="page-link" asp-action="Screen" asp-route-q="@query" asp-route-page="@(page - 1)">Previous</a>
+                        </li>
+                        @for (var p = 1; p <= totalPages; p++)
+                        {
+                            <li class="page-item @(p == page ? "active" : "")">
+                                <a class="page-link" asp-action="Screen" asp-route-q="@query" asp-route-page="@p">@p</a>
+                            </li>
+                        }
+                        <li class="page-item @(page >= totalPages ? "disabled" : "")">
+                            <a class="page-link" asp-action="Screen" asp-route-q="@query" asp-route-page="@(page + 1)">Next</a>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="create" role="tabpanel">
+        <div class="row g-3">
+            <div class="col-lg-7">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white">
+                        <h2 class="h6 fw-semibold mb-0">Create new user</h2>
+                        <p class="text-muted small mb-0 mt-1">
+                            The new account must satisfy the password policy currently in effect.
+                        </p>
+                    </div>
+                    <div class="card-body">
+                        <form asp-action="Create" method="post" class="needs-validation" novalidate>
+                            <div class="mb-3">
+                                <label for="newEmail" class="form-label text-secondary small fw-semibold">Email address</label>
+                                <input type="email" class="form-control" id="newEmail" name="email" required
+                                       placeholder="name@comltd.co.il">
+                                <div class="invalid-feedback">Please enter a valid email address.</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="newRole" class="form-label text-secondary small fw-semibold">Role</label>
+                                <select class="form-select" id="newRole" name="role">
+                                    <option value="@UserRole.User" selected>User</option>
+                                    <option value="@UserRole.Administrator">Administrator</option>
+                                </select>
+                                <div class="form-text">Administrators can reach this screen and manage every account.</div>
+                            </div>
+
+                            <hr class="my-4">
+
+                            <div class="mb-3">
+                                <label for="newPassword" class="form-label text-secondary small fw-semibold">Password</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="newPassword" name="password" required
+                                           minlength="@rules.RequiredLength" placeholder="Enter password">
+                                    <button class="btn btn-outline-secondary" type="button" data-toggle-password="newPassword">Show</button>
+                                    <div class="invalid-feedback">Password must be at least @rules.RequiredLength characters long.</div>
+                                </div>
+                            </div>
+
+                            <div class="mb-4">
+                                <label for="confirmNewPassword" class="form-label text-secondary small fw-semibold">Confirm password</label>
+                                <input type="password" class="form-control" id="confirmNewPassword" name="confirmPassword"
+                                       required minlength="@rules.RequiredLength" data-match="newPassword"
+                                       placeholder="Re-enter password">
+                                <div class="invalid-feedback">Passwords do not match.</div>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-primary fw-semibold px-4">Create user</button>
+                                <button type="reset" class="btn btn-outline-secondary">Clear</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-5">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white">
+                        <h2 class="h6 fw-semibold mb-0">Password must contain</h2>
+                    </div>
+                    <div class="card-body">
+                        <partial name="_PasswordRules" />
+                        <hr class="my-3">
+                        <p class="text-muted small mb-0">
+                            These rules come from <code>Properties/passwordOptions.json</code>
+                            and can be changed in the <strong>Password policy</strong> tab.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="policy" role="tabpanel">
+        <div class="row g-3">
+            <div class="col-lg-7">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <div>
+                            <h2 class="h6 fw-semibold mb-0">Password policy</h2>
+                            <p class="text-muted small mb-0 mt-1">Saved to Properties/passwordOptions.json</p>
+                        </div>
+                        <span class="badge text-bg-secondary">Live config</span>
+                    </div>
+                    <div class="card-body">
+                        <form asp-action="UpdatePolicy" method="post" class="needs-validation" novalidate>
+                            <div class="row g-3 mb-4">
+                                <div class="col-sm-4">
+                                    <label for="requiredLength" class="form-label text-secondary small fw-semibold">Minimum length</label>
+                                    <input type="number" class="form-control" id="requiredLength" name="RequiredLength"
+                                           value="@rules.RequiredLength" min="6" max="128" required>
+                                    <div class="invalid-feedback">Between 6 and 128.</div>
+                                </div>
+                                <div class="col-sm-4">
+                                    <label for="historyLimit" class="form-label text-secondary small fw-semibold">Password history limit</label>
+                                    <input type="number" class="form-control" id="historyLimit" name="PasswordHistoryLimit"
+                                           value="@rules.PasswordHistoryLimit" min="0" max="24" required>
+                                    <div class="form-text">Previous passwords that cannot be reused.</div>
+                                </div>
+                                <div class="col-sm-4">
+                                    <label for="attemptLimit" class="form-label text-secondary small fw-semibold">Login attempt limit</label>
+                                    <input type="number" class="form-control" id="attemptLimit" name="LoginAttemptLimit"
+                                           value="@rules.LoginAttemptLimit" min="1" max="20" required>
+                                    <div class="form-text">Failed logins before lockout.</div>
+                                </div>
+                            </div>
+
+                            <h3 class="text-uppercase text-muted fw-semibold mb-3 policy-subhead">Character requirements</h3>
+
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="requireUppercase"
+                                       name="RequireUppercase" value="true" checked="@rules.RequireUppercase">
+                                <input type="hidden" name="RequireUppercase" value="false" />
+                                <label class="form-check-label" for="requireUppercase">Require uppercase letter</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="requireLowercase"
+                                       name="RequireLowercase" value="true" checked="@rules.RequireLowercase">
+                                <input type="hidden" name="RequireLowercase" value="false" />
+                                <label class="form-check-label" for="requireLowercase">Require lowercase letter</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="requireDigit"
+                                       name="RequireDigit" value="true" checked="@rules.RequireDigit">
+                                <input type="hidden" name="RequireDigit" value="false" />
+                                <label class="form-check-label" for="requireDigit">Require digit</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="requireSpecial"
+                                       name="RequireSpecialCharacter" value="true" checked="@rules.RequireSpecialCharacter">
+                                <input type="hidden" name="RequireSpecialCharacter" value="false" />
+                                <label class="form-check-label" for="requireSpecial">Require special character</label>
+                            </div>
+                            <div class="form-check form-switch mb-4">
+                                <input class="form-check-input" type="checkbox" id="preventDictionary"
+                                       name="PreventDictionary" value="true" checked="@rules.PreventDictionary">
+                                <input type="hidden" name="PreventDictionary" value="false" />
+                                <label class="form-check-label" for="preventDictionary">Block common dictionary passwords</label>
+                            </div>
+
+                            <div class="mb-4">
+                                <label for="allowedSpecial" class="form-label text-secondary small fw-semibold">Allowed special characters</label>
+                                <input type="text" class="form-control font-monospace" id="allowedSpecial"
+                                       name="AllowedSpecialCharacters" value="@rules.AllowedSpecialCharacters" maxlength="64">
+                                <div class="form-text">Letters and digits are not allowed here.</div>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary fw-semibold px-4">Save changes</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-5">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-white">
+                        <h2 class="h6 fw-semibold mb-0">What saving does</h2>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small">
+                            The form rewrites <code>Properties/passwordOptions.json</code>. The file is
+                            watched, so the new rules apply from the next request without restarting
+                            the application, and every screen that lists the rules updates with it.
+                        </p>
+                        <div class="alert alert-warning small mb-0">
+                            Changing these rules affects new passwords only. Existing passwords stay
+                            valid until they are changed.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@* Filled in and submitted by the row "Edit" buttons. *@
+<form id="editForm" asp-action="Edit" method="post" class="d-none">
+    <input type="hidden" name="id" id="editId" />
+    <input type="hidden" name="email" id="editEmail" />
+</form>
