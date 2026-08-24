@@ -1,7 +1,9 @@
 @inject SecurityWebApp.Helpers.PasswordManager PasswordManager
+@inject Microsoft.Extensions.Options.IOptionsSnapshot<SecurityWebApp.Helpers.UsernameRules> UsernameOptions
 @{
     ViewData["Title"] = "Create account";
     var rules = PasswordManager.Rules;
+    var usernameRules = UsernameOptions.Value;
 }
 
 <div class="row justify-content-center">
@@ -16,6 +18,16 @@
                 <partial name="_Alerts" />
 
                 <form method="post" class="needs-validation" novalidate>
+                    <div class="mb-3">
+                        <label for="username" class="form-label text-secondary small fw-semibold">Username</label>
+                        <input type="text" class="form-control" id="username" name="username" required
+                               minlength="@usernameRules.MinLength" maxlength="@usernameRules.MaxLength"
+                               autocomplete="username" placeholder="your username">
+                        <div class="invalid-feedback">
+                            Between @usernameRules.MinLength and @usernameRules.MaxLength characters.
+                        </div>
+                    </div>
+
                     <div class="mb-3">
                         <label for="email" class="form-label text-secondary small fw-semibold">Email address</label>
                         <input type="email" class="form-control" id="email" name="email" required

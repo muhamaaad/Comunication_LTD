@@ -15,6 +15,7 @@ var loginPolicy = builder.Configuration.GetSection("Authentication").Get<LoginPo
 
 // Options
 builder.Services.Configure<PasswordRules>(builder.Configuration.GetSection("PasswordRules"));
+builder.Services.Configure<UsernameRules>(builder.Configuration.GetSection("UsernameRules"));
 builder.Services.Configure<LoginPolicy>(builder.Configuration.GetSection("Authentication"));
 builder.Services.Configure<PasswordResetPolicy>(builder.Configuration.GetSection("PasswordReset"));
 builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));
@@ -28,7 +29,6 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 builder.Services.AddSingleton<PasswordManager>();
 builder.Services.AddScoped<LoginAttemptManager>();
 builder.Services.AddScoped<PasswordHistoryService>();
-builder.Services.AddSingleton<PasswordPolicyWriter>();
 builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 
 // MVC. The anti-forgery filter is global so a new POST action cannot forget it,

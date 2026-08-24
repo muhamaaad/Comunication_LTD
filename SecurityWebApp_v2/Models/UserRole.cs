@@ -2,6 +2,6 @@ namespace SecurityWebApp.Models;
 
 public enum UserRole
 {
-    User = 0,
-    Administrator = 1
+    Regular = 0,
+    Admin = 1
 }

@@ -15,7 +15,7 @@ namespace SecurityWebApp.Controllers;
 
 public class AccountController : Controller
 {
-    public const string AdministratorRole = nameof(UserRole.Administrator);
+    public const string AdministratorRole = nameof(UserRole.Admin);
 
     private const string ResetUserIdKey = "ResetUserId";
     private const string ResetTokenIdKey = "ResetTokenId";
@@ -23,12 +23,13 @@ public class AccountController : Controller
     private const int MaxResetVerifyAttempts = 5;
 
     // Every failed login says the same thing, so the form cannot be used to find
-    // out which addresses are registered.
-    private const string LoginFailureMessage = "Invalid email or password.";
+    // out which usernames exist.
+    private const string LoginFailureMessage = "Login details are incorrect.";
 
     // Verifying against a throwaway hash costs the same as verifying a real one,
-    // which keeps an unknown address from answering faster than a known one.
+    // which keeps an unknown username from answering faster than a known one.
     private static readonly string DummyPasswordHash = PasswordHash.HashPassword(Guid.NewGuid().ToString());
+
 
     private readonly ApplicationDbContext _context;
     private readonly PasswordManager _passwordManager;
@@ -37,6 +38,7 @@ public class AccountController : Controller
     private readonly IEmailService _emailService;
     private readonly PasswordResetPolicy _resetPolicy;
     private readonly LoginPolicy _loginPolicy;
+    private readonly UsernameRules _usernameRules;
     private readonly ILogger<AccountController> _logger;
 
     public AccountController(
@@ -47,6 +49,7 @@ public class AccountController : Controller
         IEmailService emailService,
         IOptionsSnapshot<PasswordResetPolicy> resetPolicy,
         IOptionsSnapshot<LoginPolicy> loginPolicy,
+        IOptionsSnapshot<UsernameRules> usernameRules,
         ILogger<AccountController> logger)
     {
         _context = context;
@@ -56,6 +59,7 @@ public class AccountController : Controller
         _emailService = emailService;
         _resetPolicy = resetPolicy.Value;
         _loginPolicy = loginPolicy.Value;
+        _usernameRules = usernameRules.Value;
         _logger = logger;
     }
 
@@ -70,18 +74,18 @@ public class AccountController : Controller
     }
 
     [HttpPost]
-    public async Task<IActionResult> Login(string email, string password, string? returnUrl = null)
+    public async Task<IActionResult> Login(string username, string password, string? returnUrl = null)
     {
         ViewBag.ReturnUrl = returnUrl;
 
-        if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
+        if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            ViewBag.Error = "Email and password are required.";
+            ViewBag.Error = "Username and password are required.";
             return View();
         }
 
-        email = email.Trim();
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+        username = username.Trim();
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == username);
 
         if (user == null)
         {
@@ -138,15 +142,24 @@ public class AccountController : Controller
     }
 
     [HttpPost]
-    public async Task<IActionResult> Register(string email, string password, string confirmPassword)
+    public async Task<IActionResult> Register(string username, string email, string password, string confirmPassword)
     {
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        if (string.IsNullOrWhiteSpace(username) ||
+            string.IsNullOrWhiteSpace(email) ||
+            string.IsNullOrWhiteSpace(password))
         {
-            ViewBag.Error = "Email and password are required";
+            ViewBag.Error = "Username, email and password are required";
             return View();
         }
 
+        username = username.Trim();
         email = email.Trim();
+
+        if (!_usernameRules.IsValid(username, out string usernameError))
+        {
+            ViewBag.Error = usernameError;
+            return View();
+        }
 
         if (!new EmailAddressAttribute().IsValid(email))
         {
@@ -166,6 +179,12 @@ public class AccountController : Controller
             return View();
         }
 
+        if (await _context.Users.AnyAsync(u => u.Username == username))
+        {
+            ViewBag.Error = "That username is already taken";
+            return View();
+        }
+
         if (await _context.Users.AnyAsync(u => u.Email == email))
         {
             ViewBag.Error = "Email already registered";
@@ -174,9 +193,12 @@ public class AccountController : Controller
 
         var user = new User
         {
+            Username = username,
             Email = email,
             PasswordHash = PasswordHash.HashPassword(password),
-            Role = await ResolveInitialRoleAsync(email),
+            // Signing up always gives the lowest role. Admins are made by an
+            // existing admin from the System screen.
+            Role = UserRole.Regular,
             CreatedAt = DateTime.UtcNow,
             LoginAttempts = 0,
             IsLocked = false
@@ -190,9 +212,9 @@ public class AccountController : Controller
         }
         catch (DbUpdateException)
         {
-            // The unique index is the real guard; the check above only produces
+            // The unique indexes are the real guard; the checks above only produce
             // a friendlier message when there is no race.
-            ViewBag.Error = "Email already registered";
+            ViewBag.Error = "That username or email is already registered";
             return View();
         }
 
@@ -450,31 +472,30 @@ public class AccountController : Controller
         return RedirectToAction(nameof(Login));
     }
 
-    // --------------------------------------------------------------- Shared
+    // -------------------------------------------------------------- Profile
 
-    // Bootstrap only: somebody has to be able to reach the System screen on a fresh
-    // database. Once an administrator exists, roles are managed there and this rule
-    // never fires again.
-    private async Task<UserRole> ResolveInitialRoleAsync(string email)
+    [HttpGet]
+    [Authorize]
+    public async Task<IActionResult> Profile()
     {
-        var isSeedAddress = _loginPolicy.AdminEmails
-            .Any(a => string.Equals(a, email, StringComparison.OrdinalIgnoreCase));
-
-        if (!isSeedAddress)
+        var user = await GetCurrentUserAsync();
+        if (user == null)
         {
-            return UserRole.User;
+            await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            return RedirectToAction(nameof(Login));
         }
 
-        var administratorExists = await _context.Users.AnyAsync(u => u.Role == UserRole.Administrator);
-        return administratorExists ? UserRole.User : UserRole.Administrator;
+        return View(user);
     }
+
+    // --------------------------------------------------------------- Shared
 
     private async Task SignInAsync(User user)
     {
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new(ClaimTypes.Name, user.Email),
+            new(ClaimTypes.Name, user.Username),
             new(ClaimTypes.Role, user.Role.ToString())
         };
 

@@ -53,19 +53,4 @@
         select.addEventListener('change', () => select.form.submit());
     });
 
-    // System screen: the row "Edit" buttons feed the hidden edit form.
-    const editForm = document.getElementById('editForm');
-    if (editForm) {
-        document.querySelectorAll('.js-edit').forEach(button => {
-            button.addEventListener('click', () => {
-                const current = button.getAttribute('data-email');
-                const next = window.prompt('New email address:', current);
-                if (next && next.trim() && next.trim() !== current) {
-                    document.getElementById('editId').value = button.getAttribute('data-id');
-                    document.getElementById('editEmail').value = next.trim();
-                    editForm.submit();
-                }
-            });
-        });
-    }
 })();

@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using SecurityWebApp.Data;
 using SecurityWebApp.Helpers;
 using SecurityWebApp.Models;
@@ -17,23 +18,24 @@ public class SystemController : Controller
 {
     private const int PageSize = 10;
 
+
     private readonly ApplicationDbContext _db;
     private readonly PasswordManager _passwordManager;
     private readonly PasswordHistoryService _passwordHistory;
-    private readonly PasswordPolicyWriter _policyWriter;
+    private readonly UsernameRules _usernameRules;
     private readonly ILogger<SystemController> _logger;
 
     public SystemController(
         ApplicationDbContext db,
         PasswordManager passwordManager,
         PasswordHistoryService passwordHistory,
-        PasswordPolicyWriter policyWriter,
+        IOptionsSnapshot<UsernameRules> usernameRules,
         ILogger<SystemController> logger)
     {
         _db = db;
         _passwordManager = passwordManager;
         _passwordHistory = passwordHistory;
-        _policyWriter = policyWriter;
+        _usernameRules = usernameRules.Value;
         _logger = logger;
     }
 
@@ -47,7 +49,8 @@ public class SystemController : Controller
         if (!string.IsNullOrWhiteSpace(q))
         {
             var term = q.Trim();
-            query = query.Where(u => EF.Functions.Like(u.Email, $"%{term}%"));
+            query = query.Where(u => EF.Functions.Like(u.Username, $"%{term}%")
+                                  || EF.Functions.Like(u.Email, $"%{term}%"));
         }
 
         var matching = await query.CountAsync();
@@ -69,17 +72,25 @@ public class SystemController : Controller
         ViewBag.Page = page;
         ViewBag.TotalPages = totalPages;
         ViewBag.Matching = matching;
-        ViewBag.AdministratorCount = await _db.Users.CountAsync(u => u.Role == UserRole.Administrator);
+        ViewBag.AdministratorCount = await _db.Users.CountAsync(u => u.Role == UserRole.Admin);
         ViewBag.CurrentUserId = GetCurrentUserId();
+        ViewBag.NewUsername = TempData["NewUsername"];
 
         return View(users);
     }
 
     // CREATE
     [HttpPost]
-    public async Task<IActionResult> Create(string? email, string? password, string? confirmPassword, UserRole role = UserRole.User)
+    public async Task<IActionResult> Create(string? username, string? email, string? password, string? confirmPassword, UserRole role = UserRole.Regular)
     {
+        username = username?.Trim() ?? string.Empty;
         email = email?.Trim() ?? string.Empty;
+
+        if (!_usernameRules.IsValid(username, out string usernameError))
+        {
+            TempData["Error"] = usernameError;
+            return RedirectToAction(nameof(Screen));
+        }
 
         if (string.IsNullOrWhiteSpace(email) || !new EmailAddressAttribute().IsValid(email))
         {
@@ -101,6 +112,12 @@ public class SystemController : Controller
             return RedirectToAction(nameof(Screen));
         }
 
+        if (await _db.Users.AnyAsync(u => u.Username == username))
+        {
+            TempData["Error"] = "That username is already taken.";
+            return RedirectToAction(nameof(Screen));
+        }
+
         if (await _db.Users.AnyAsync(u => u.Email == email))
         {
             TempData["Error"] = "A user with that email already exists.";
@@ -109,6 +126,7 @@ public class SystemController : Controller
 
         var user = new User
         {
+            Username = username,
             Email = email,
             PasswordHash = PasswordHash.HashPassword(password),
             Role = role,
@@ -125,49 +143,21 @@ public class SystemController : Controller
         }
         catch (DbUpdateException)
         {
-            TempData["Error"] = "A user with that email already exists.";
+            TempData["Error"] = "That username or email is already taken.";
             return RedirectToAction(nameof(Screen));
         }
 
         await _passwordHistory.RecordAsync(user);
 
         _logger.LogInformation("Created user with id {Id}", user.Id);
+
+        // The screen shows this name back to the admin. Razor encodes it, which is
+        // what stops a username like "<script>..." from running.
+        TempData["NewUsername"] = user.Username;
         TempData["Success"] = "User created.";
         return RedirectToAction(nameof(Screen));
     }
 
-    // UPDATE (email)
-    [HttpPost]
-    public async Task<IActionResult> Edit(int id, string? email)
-    {
-        var user = await _db.Users.FindAsync(id);
-        if (user is null)
-        {
-            TempData["Error"] = "User not found.";
-            return RedirectToAction(nameof(Screen));
-        }
-
-        email = email?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(email) || !new EmailAddressAttribute().IsValid(email))
-        {
-            TempData["Error"] = "Please enter a valid email address.";
-            return RedirectToAction(nameof(Screen));
-        }
-
-        if (await _db.Users.AnyAsync(u => u.Email == email && u.Id != id))
-        {
-            TempData["Error"] = "Another user already uses that email.";
-            return RedirectToAction(nameof(Screen));
-        }
-
-        user.Email = email;
-        await _db.SaveChangesAsync();
-
-        TempData["Success"] = $"User {id} updated.";
-        return RedirectToAction(nameof(Screen));
-    }
-
-    // DELETE
     [HttpPost]
     public async Task<IActionResult> Delete(int id)
     {
@@ -184,13 +174,7 @@ public class SystemController : Controller
             return RedirectToAction(nameof(Screen));
         }
 
-        if (await _db.Customers.AnyAsync(c => c.CreatedByUserId == id))
-        {
-            TempData["Error"] = "This user has customers on record and cannot be deleted.";
-            return RedirectToAction(nameof(Screen));
-        }
-
-        if (user.Role == UserRole.Administrator && await IsLastAdministratorAsync(id))
+        if (user.Role == UserRole.Admin && await IsLastAdministratorAsync(id))
         {
             TempData["Error"] = "This is the last administrator and cannot be deleted.";
             return RedirectToAction(nameof(Screen));
@@ -228,7 +212,7 @@ public class SystemController : Controller
             return RedirectToAction(nameof(Screen));
         }
 
-        if (user.Role == UserRole.Administrator && await IsLastAdministratorAsync(id))
+        if (user.Role == UserRole.Admin && await IsLastAdministratorAsync(id))
         {
             TempData["Error"] = "This is the last administrator and cannot be demoted.";
             return RedirectToAction(nameof(Screen));
@@ -238,24 +222,7 @@ public class SystemController : Controller
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Set role {Role} on user {Id}", role, id);
-        TempData["Success"] = $"User {id} is now a {role}.";
-        return RedirectToAction(nameof(Screen));
-    }
-
-    // PASSWORD POLICY
-    [HttpPost]
-    public async Task<IActionResult> UpdatePolicy(PasswordRules rules)
-    {
-        if (!_policyWriter.Validate(rules, out var error))
-        {
-            TempData["Error"] = error;
-            return RedirectToAction(nameof(Screen));
-        }
-
-        await _policyWriter.SaveAsync(rules);
-
-        _logger.LogInformation("Password policy updated by user {Id}", GetCurrentUserId());
-        TempData["Success"] = "Password policy saved. It applies to passwords set from now on.";
+        TempData["Success"] = $"User {id} is now {role}.";
         return RedirectToAction(nameof(Screen));
     }
 
@@ -286,6 +253,6 @@ public class SystemController : Controller
 
     private async Task<bool> IsLastAdministratorAsync(int id)
     {
-        return !await _db.Users.AnyAsync(u => u.Role == UserRole.Administrator && u.Id != id);
+        return !await _db.Users.AnyAsync(u => u.Role == UserRole.Admin && u.Id != id);
     }
 }

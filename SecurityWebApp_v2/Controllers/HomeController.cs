@@ -1,29 +1,20 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using SecurityWebApp.Data;
 using SecurityWebApp.Models;
 
 namespace SecurityWebApp.Controllers;
 
+[AllowAnonymous]
 public class HomeController : Controller
 {
-    private readonly ApplicationDbContext _context;
-
-    public HomeController(ApplicationDbContext context)
+    // The shop window. Open to everyone; the menu is what changes for a
+    // signed-in user.
+    public IActionResult Index()
     {
-        _context = context;
-    }
-
-    [Authorize]
-    public async Task<IActionResult> Index()
-    {
-        ViewBag.CustomerCount = await _context.Customers.CountAsync();
         return View();
     }
 
-    [AllowAnonymous]
     [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
     public IActionResult Error()
     {
