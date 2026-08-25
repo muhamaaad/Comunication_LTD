@@ -1,17 +1,23 @@
 using SecurityWebApp.Data;
 using SecurityWebApp.Models;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+namespace SecurityWebApp.Helpers;
 
 public class LoginAttemptManager
 {
     private readonly ApplicationDbContext _context;
-    private readonly int _attemptLimit = 3;
-    private readonly int _lockoutDurationMinutes = 15;
+    private readonly int _attemptLimit;
+    private readonly int _lockoutDurationMinutes;
 
-    public LoginAttemptManager(ApplicationDbContext context, int attemptLimit = 3)
+    public LoginAttemptManager(
+        ApplicationDbContext context,
+        IOptionsSnapshot<PasswordRules> rules,
+        IOptionsSnapshot<LoginPolicy> loginPolicy)
     {
         _context = context;
-        _attemptLimit = attemptLimit;
+        _attemptLimit = rules.Value.LoginAttemptLimit;
+        _lockoutDurationMinutes = loginPolicy.Value.LockoutMinutes;
     }
 
     public bool IsAccountLocked(User user)
@@ -19,10 +25,11 @@ public class LoginAttemptManager
         if (!user.IsLocked)
             return false;
 
-        if (user.LockedUntil.HasValue && DateTime.Now > user.LockedUntil.Value)
+        if (user.LockedUntil.HasValue && DateTime.UtcNow > user.LockedUntil.Value)
         {
             user.IsLocked = false;
             user.LoginAttempts = 0;
+            user.LockedUntil = null;
             _context.SaveChanges();
             return false;
         }
@@ -33,12 +40,12 @@ public class LoginAttemptManager
     public void RecordFailedAttempt(User user)
     {
         user.LoginAttempts++;
-        user.LastFailedLoginAttempt = DateTime.Now;
+        user.LastFailedLoginAttempt = DateTime.UtcNow;
 
         if (user.LoginAttempts >= _attemptLimit)
         {
             user.IsLocked = true;
-            user.LockedUntil = DateTime.Now.AddMinutes(_lockoutDurationMinutes);
+            user.LockedUntil = DateTime.UtcNow.AddMinutes(_lockoutDurationMinutes);
         }
 
         _context.SaveChanges();

@@ -1,73 +1,140 @@
-using SecurityWebApp.Helpers;
-using SecurityWebApp.Data;
-using SecurityWebApp.Models;
+using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using SecurityWebApp.Data;
+using SecurityWebApp.Helpers;
+using SecurityWebApp.Models;
+using SecurityWebApp.Services;
 
 namespace SecurityWebApp.Controllers;
 
 public class AccountController : Controller
 {
-    private readonly ApplicationDbContext _context;
+    // The name of the role claim given to admins, used by [Authorize(Roles = ...)].
+    public const string AdministratorRole = "Admin";
 
-    public AccountController(ApplicationDbContext context)
+    private const string ResetUserIdKey = "ResetUserId";
+    private const string ResetTokenIdKey = "ResetTokenId";
+    private const string ResetAttemptsKey = "ResetVerifyAttempts";
+    private const int MaxResetVerifyAttempts = 5;
+
+    // Every failed login says the same thing, so the form cannot be used to find
+    // out which usernames exist.
+    private const string LoginFailureMessage = "Login details are incorrect.";
+
+    // Verifying against a throwaway hash costs the same as verifying a real one,
+    // which keeps an unknown username from answering faster than a known one.
+    private static readonly string DummyPasswordHash = PasswordHash.HashPassword(Guid.NewGuid().ToString());
+
+
+    private readonly ApplicationDbContext _context;
+    private readonly PasswordManager _passwordManager;
+    private readonly LoginAttemptManager _loginAttemptManager;
+    private readonly PasswordHistoryService _passwordHistory;
+    private readonly IEmailService _emailService;
+    private readonly PasswordResetPolicy _resetPolicy;
+    private readonly LoginPolicy _loginPolicy;
+    private readonly UsernameRules _usernameRules;
+    private readonly ILogger<AccountController> _logger;
+
+    public AccountController(
+        ApplicationDbContext context,
+        PasswordManager passwordManager,
+        LoginAttemptManager loginAttemptManager,
+        PasswordHistoryService passwordHistory,
+        IEmailService emailService,
+        IOptionsSnapshot<PasswordResetPolicy> resetPolicy,
+        IOptionsSnapshot<LoginPolicy> loginPolicy,
+        IOptionsSnapshot<UsernameRules> usernameRules,
+        ILogger<AccountController> logger)
     {
         _context = context;
+        _passwordManager = passwordManager;
+        _loginAttemptManager = loginAttemptManager;
+        _passwordHistory = passwordHistory;
+        _emailService = emailService;
+        _resetPolicy = resetPolicy.Value;
+        _loginPolicy = loginPolicy.Value;
+        _usernameRules = usernameRules.Value;
+        _logger = logger;
     }
 
+    // ---------------------------------------------------------------- Login
+
     [HttpGet]
-    public IActionResult Login()
+    public IActionResult Login(string? returnUrl = null)
     {
         ViewBag.Success = TempData["Success"];
+        ViewBag.ReturnUrl = returnUrl;
         return View();
     }
 
     [HttpPost]
-    public IActionResult Login(string email, string password)
+    public async Task<IActionResult> Login(string username, string password, string? returnUrl = null)
     {
-        if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(password))
+        ViewBag.ReturnUrl = returnUrl;
+
+        if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            ViewBag.Error = "Email and password are required.";
+            ViewBag.Error = "Username and password are required.";
             return View();
         }
 
-        var user = _context.Users.FirstOrDefault(u => u.Email == email);
+        username = username.Trim();
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == username);
 
         if (user == null)
         {
-            ViewBag.Error = "Invalid email or password.";
+            PasswordHash.ValidatePassword(password, DummyPasswordHash);
+            ViewBag.Error = LoginFailureMessage;
             return View();
         }
 
-        // Check if account is locked
-        var loginAttemptManager = new LoginAttemptManager(_context);
-        if (loginAttemptManager.IsAccountLocked(user))
+        if (_loginAttemptManager.IsAccountLocked(user))
         {
-            ViewBag.Error = $"Account is locked. Try again after 15 minutes.";
+            ViewBag.Error = $"Account is locked. Try again after {_loginPolicy.LockoutMinutes} minutes.";
             return View();
         }
 
-        // Verify password
-        if (user != null && PasswordHash.ValidatePassword(password, user.PasswordHash))
+        if (!PasswordHash.ValidatePassword(password, user.PasswordHash))
         {
-            // Login successful - reset attempts
-            loginAttemptManager.ResetAttempts(user);
-            return RedirectToAction("Index", "Home");
+            _loginAttemptManager.RecordFailedAttempt(user);
+
+            ViewBag.Error = user.IsLocked
+                ? "Account locked due to too many failed login attempts."
+                : LoginFailureMessage;
+            return View();
         }
 
-        // Password is wrong - record failed attempt
-        loginAttemptManager.RecordFailedAttempt(user);
-        
-        int remainingAttempts = 3 - user.LoginAttempts;
-        if (remainingAttempts > 0)
-        {
-            ViewBag.Error = $"Invalid password. {remainingAttempts} attempts remaining.";
-        }
-        else
-        {
-            ViewBag.Error = "Account locked due to too many failed login attempts.";
-        }
-        return View();
+        _loginAttemptManager.ResetAttempts(user);
+        user.LastLogin = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        // Drop anything a previous visitor left in the session before issuing
+        // the authentication cookie.
+        HttpContext.Session.Clear();
+        await SignInAsync(user);
+
+        _logger.LogInformation("User {UserId} signed in.", user.Id);
+
+        return RedirectToLocal(returnUrl);
     }
+
+    [HttpPost]
+    [Authorize]
+    public async Task<IActionResult> Logout()
+    {
+        HttpContext.Session.Clear();
+        await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return RedirectToAction(nameof(Login));
+    }
+
+    // ------------------------------------------------------------- Register
 
     [HttpGet]
     public IActionResult Register()
@@ -76,11 +143,28 @@ public class AccountController : Controller
     }
 
     [HttpPost]
-    public IActionResult Register(string email, string password, string confirmPassword)
+    public async Task<IActionResult> Register(string username, string email, string password, string confirmPassword)
     {
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        if (string.IsNullOrWhiteSpace(username) ||
+            string.IsNullOrWhiteSpace(email) ||
+            string.IsNullOrWhiteSpace(password))
         {
-            ViewBag.Error = "Email and password are required";
+            ViewBag.Error = "Username, email and password are required";
+            return View();
+        }
+
+        username = username.Trim();
+        email = email.Trim();
+
+        if (!_usernameRules.IsValid(username, out string usernameError))
+        {
+            ViewBag.Error = usernameError;
+            return View();
+        }
+
+        if (!new EmailAddressAttribute().IsValid(email))
+        {
+            ViewBag.Error = "Invalid email format";
             return View();
         }
 
@@ -90,22 +174,19 @@ public class AccountController : Controller
             return View();
         }
 
-        // Use PasswordManager for complex validation
-        var passwordManager = new PasswordManager();
-        if (!passwordManager.IsPasswordStrong(password, out string validationError))
+        if (!_passwordManager.IsPasswordStrong(password, out string validationError))
         {
             ViewBag.Error = validationError;
             return View();
         }
 
-        // Validate email format
-        if (!IsValidEmail(email))
+        if (await _context.Users.AnyAsync(u => u.Username == username))
         {
-            ViewBag.Error = "Invalid email format";
+            ViewBag.Error = "That username is already taken";
             return View();
         }
 
-        if (_context.Users.Any(u => u.Email == email))
+        if (await _context.Users.AnyAsync(u => u.Email == email))
         {
             ViewBag.Error = "Email already registered";
             return View();
@@ -113,66 +194,178 @@ public class AccountController : Controller
 
         var user = new User
         {
+            Username = username,
             Email = email,
             PasswordHash = PasswordHash.HashPassword(password),
+            // Signing up never makes an admin. Admins are made by an existing
+            // admin from the System screen.
+            IsAdmin = false,
+            CreatedAt = DateTime.UtcNow,
             LoginAttempts = 0,
             IsLocked = false
         };
 
         _context.Users.Add(user);
-        _context.SaveChanges();
 
-        return RedirectToAction("Login");
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // The unique indexes are the real guard; the checks above only produce
+            // a friendlier message when there is no race.
+            ViewBag.Error = "That username or email is already registered";
+            return View();
+        }
+
+        await _passwordHistory.RecordAsync(user);
+
+        await TrySendAsync(
+            () => _emailService.SendWelcomeAsync(user.Email),
+            "welcome email",
+            user.Id);
+
+        _logger.LogInformation("Registered user {UserId}.", user.Id);
+
+        TempData["Success"] = "Account created. You can now log in.";
+        return RedirectToAction(nameof(Login));
     }
 
+    // ------------------------------------------------------ Change password
+
     [HttpGet]
-    public IActionResult ForgotPassword()
+    [Authorize]
+    public IActionResult ChangePassword()
     {
         return View();
     }
 
     [HttpPost]
-    public IActionResult ForgotPassword(string identifier)
+    [Authorize]
+    public async Task<IActionResult> ChangePassword(string currentPassword, string newPassword, string confirmPassword)
+    {
+        var user = await GetCurrentUserAsync();
+        if (user == null)
+        {
+            await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            return RedirectToAction(nameof(Login));
+        }
+
+        if (string.IsNullOrWhiteSpace(currentPassword) ||
+            string.IsNullOrWhiteSpace(newPassword) ||
+            string.IsNullOrWhiteSpace(confirmPassword))
+        {
+            ViewBag.Error = "All fields are required";
+            return View();
+        }
+
+        if (!PasswordHash.ValidatePassword(currentPassword, user.PasswordHash))
+        {
+            ViewBag.Error = "Current password is incorrect";
+            return View();
+        }
+
+        if (newPassword != confirmPassword)
+        {
+            ViewBag.Error = "Passwords do not match";
+            return View();
+        }
+
+        if (!_passwordManager.IsPasswordStrong(newPassword, out string validationError))
+        {
+            ViewBag.Error = validationError;
+            return View();
+        }
+
+        if (!await _passwordHistory.IsPasswordUnusedAsync(user.Id, newPassword))
+        {
+            ViewBag.Error = $"You cannot reuse any of your last {_passwordHistory.HistoryLimit} passwords.";
+            return View();
+        }
+
+        await _passwordHistory.ApplyNewPasswordAsync(user, newPassword);
+        _logger.LogInformation("User {UserId} changed their password.", user.Id);
+
+        ViewBag.Success = "Your password has been changed.";
+        return View();
+    }
+
+    // ------------------------------------------------------ Forgot password
+
+    [HttpGet]
+    public IActionResult ForgotPassword()
+    {
+        ViewBag.Error = TempData["Error"];
+        return View();
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> ForgotPassword(string identifier)
     {
         if (string.IsNullOrWhiteSpace(identifier))
         {
-            ViewBag.Error = "Email or username is required";
+            ViewBag.Error = "Email address is required";
             return View();
         }
 
-        var user = _context.Users.FirstOrDefault(u => u.Email == identifier);
-        if (user == null)
+        identifier = identifier.Trim();
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == identifier);
+
+        // The answer is the same whether or not the address is registered, so this
+        // page cannot be used to discover accounts. Version 1 said "No account was
+        // found with this email".
+        if (user != null)
         {
-            ViewBag.Error = "No account was found with this email or username";
-            return View();
+            // A new request replaces any code that is still outstanding.
+            var outstanding = await _context.PasswordResetTokens
+                .Where(t => t.UserId == user.Id && !t.Used)
+                .ToListAsync();
+
+            foreach (var previous in outstanding)
+            {
+                previous.Used = true;
+            }
+
+            var resetToken = new PasswordResetToken
+            {
+                UserId = user.Id,
+                ResetToken = ResetCodeGenerator.GenerateSha1Code(),
+                Expiration = DateTime.UtcNow.AddMinutes(_resetPolicy.TokenExpirationMinutes),
+                Used = false
+            };
+
+            _context.PasswordResetTokens.Add(resetToken);
+            await _context.SaveChangesAsync();
+
+            var sent = await TrySendAsync(
+                () => _emailService.SendPasswordResetCodeAsync(
+                    user.Email, resetToken.ResetToken, _resetPolicy.TokenExpirationMinutes),
+                "password reset code",
+                user.Id);
+
+            if (!sent)
+            {
+                ViewBag.Error = "We could not send the email right now. Please try again in a moment.";
+                return View();
+            }
         }
 
-        var resetToken = new PasswordResetToken
-        {
-            UserId = user.Id,
-            ResetToken = ResetCodeGenerator.GenerateSha1Code(),
-            Expiration = DateTime.UtcNow.AddMinutes(15),
-            Used = false
-        };
+        HttpContext.Session.SetInt32(ResetAttemptsKey, 0);
 
-        _context.PasswordResetTokens.Add(resetToken);
-        _context.SaveChanges();
-
-        TempData["Success"] = "Code sent successfully!";
-        TempData["ResetCode"] = resetToken.ResetToken;
-        return RedirectToAction("VerifyResetCode");
+        TempData["Success"] = "If that address is registered, a verification code is on its way.";
+        return RedirectToAction(nameof(VerifyResetCode));
     }
 
     [HttpGet]
     public IActionResult VerifyResetCode()
     {
         ViewBag.Success = TempData["Success"];
-        ViewBag.ResetCode = TempData["ResetCode"];
         return View();
     }
 
     [HttpPost]
-    public IActionResult VerifyResetCode(string resetCode)
+    public async Task<IActionResult> VerifyResetCode(string resetCode)
     {
         if (string.IsNullOrWhiteSpace(resetCode))
         {
@@ -180,42 +373,53 @@ public class AccountController : Controller
             return View();
         }
 
-        var token = _context.PasswordResetTokens.FirstOrDefault(t =>
-            t.ResetToken == resetCode.Trim().ToLower() && !t.Used);
+        // Without a ceiling a 40-character code is still guessable given enough tries.
+        var attempts = HttpContext.Session.GetInt32(ResetAttemptsKey) ?? 0;
+        if (attempts >= MaxResetVerifyAttempts)
+        {
+            HttpContext.Session.Remove(ResetAttemptsKey);
+            TempData["Error"] = "Too many incorrect codes. Please request a new one.";
+            return RedirectToAction(nameof(ForgotPassword));
+        }
+
+        var candidate = resetCode.Trim().ToLowerInvariant();
+        var token = await _context.PasswordResetTokens
+            .FirstOrDefaultAsync(t => t.ResetToken == candidate && !t.Used);
 
         if (token == null || token.Expiration < DateTime.UtcNow)
         {
+            HttpContext.Session.SetInt32(ResetAttemptsKey, attempts + 1);
             ViewBag.Error = "Invalid or expired verification code";
             return View();
         }
 
-        HttpContext.Session.SetInt32("ResetUserId", token.UserId);
-        HttpContext.Session.SetInt32("ResetTokenId", token.Id);
+        HttpContext.Session.Remove(ResetAttemptsKey);
+        HttpContext.Session.SetInt32(ResetUserIdKey, token.UserId);
+        HttpContext.Session.SetInt32(ResetTokenIdKey, token.Id);
 
-        return RedirectToAction("ResetPassword");
+        return RedirectToAction(nameof(ResetPassword));
     }
 
     [HttpGet]
     public IActionResult ResetPassword()
     {
-        if (HttpContext.Session.GetInt32("ResetUserId") == null)
+        if (HttpContext.Session.GetInt32(ResetUserIdKey) == null)
         {
-            return RedirectToAction("ForgotPassword");
+            return RedirectToAction(nameof(ForgotPassword));
         }
 
         return View();
     }
 
     [HttpPost]
-    [ValidateAntiForgeryToken]
-    public IActionResult ResetPassword(string newPassword, string confirmPassword)
+    public async Task<IActionResult> ResetPassword(string newPassword, string confirmPassword)
     {
-        var userId = HttpContext.Session.GetInt32("ResetUserId");
-        var tokenId = HttpContext.Session.GetInt32("ResetTokenId");
+        var userId = HttpContext.Session.GetInt32(ResetUserIdKey);
+        var tokenId = HttpContext.Session.GetInt32(ResetTokenIdKey);
 
         if (userId == null || tokenId == null)
         {
-            return RedirectToAction("ForgotPassword");
+            return RedirectToAction(nameof(ForgotPassword));
         }
 
         if (string.IsNullOrWhiteSpace(newPassword) || string.IsNullOrWhiteSpace(confirmPassword))
@@ -230,69 +434,126 @@ public class AccountController : Controller
             return View();
         }
 
-        var passwordManager = new PasswordManager();
-        if (!passwordManager.IsPasswordStrong(newPassword, out string validationError))
+        if (!_passwordManager.IsPasswordStrong(newPassword, out string validationError))
         {
             ViewBag.Error = validationError;
             return View();
         }
 
-        var user = _context.Users.FirstOrDefault(u => u.Id == userId.Value);
-        var token = _context.PasswordResetTokens.FirstOrDefault(t => t.Id == tokenId.Value && !t.Used);
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId.Value);
+
+        // The token has to belong to the user the session was issued for.
+        var token = await _context.PasswordResetTokens
+            .FirstOrDefaultAsync(t => t.Id == tokenId.Value && t.UserId == userId.Value && !t.Used);
 
         if (user == null || token == null || token.Expiration < DateTime.UtcNow)
         {
+            ClearResetSession();
             ViewBag.Error = "Password reset session is invalid or expired";
             return View();
         }
 
-        user.PasswordHash = PasswordHash.HashPassword(newPassword);
-        token.Used = true;
-        _context.SaveChanges();
+        if (!await _passwordHistory.IsPasswordUnusedAsync(user.Id, newPassword))
+        {
+            ViewBag.Error = $"You cannot reuse any of your last {_passwordHistory.HistoryLimit} passwords.";
+            return View();
+        }
 
-        HttpContext.Session.Remove("ResetUserId");
-        HttpContext.Session.Remove("ResetTokenId");
+        token.Used = true;
+        await _passwordHistory.ApplyNewPasswordAsync(user, newPassword);
+
+        // A completed reset also clears the lockout, otherwise the user still
+        // cannot get in with the password they just chose.
+        _loginAttemptManager.ResetAttempts(user);
+
+        ClearResetSession();
+        _logger.LogInformation("User {UserId} completed a password reset.", user.Id);
 
         TempData["Success"] = "Password reset successfully. You can now log in.";
-        return RedirectToAction("Login");
+        return RedirectToAction(nameof(Login));
     }
 
-    private bool IsValidEmail(string email)
+    // -------------------------------------------------------------- Profile
+
+    [HttpGet]
+    [Authorize]
+    public async Task<IActionResult> Profile()
+    {
+        var user = await GetCurrentUserAsync();
+        if (user == null)
+        {
+            await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            return RedirectToAction(nameof(Login));
+        }
+
+        return View(user);
+    }
+
+    // --------------------------------------------------------------- Shared
+
+    private async Task SignInAsync(User user)
+    {
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new(ClaimTypes.Name, user.Username)
+        };
+
+        // Only admins carry the role claim, which is what [Authorize(Roles = ...)]
+        // on the System screen looks for.
+        if (user.IsAdmin)
+        {
+            claims.Add(new Claim(ClaimTypes.Role, AdministratorRole));
+        }
+
+        var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+
+        await HttpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            new ClaimsPrincipal(identity));
+    }
+
+    private async Task<User?> GetCurrentUserAsync()
+    {
+        var id = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!int.TryParse(id, out var userId))
+        {
+            return null;
+        }
+
+        return await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
+    }
+
+    private async Task<bool> TrySendAsync(Func<Task> send, string description, int userId)
     {
         try
         {
-            var addr = new System.Net.Mail.MailAddress(email);
-            return addr.Address == email;
+            await send();
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Could not send {Description} for user {UserId}.", description, userId);
             return false;
         }
     }
-}
 
-/*
-public class AccountController : Controller
-{
-    // Displays the login page
-    [HttpGet]
-    public IActionResult Login()
+    private void ClearResetSession()
     {
-        return View();
+        HttpContext.Session.Remove(ResetUserIdKey);
+        HttpContext.Session.Remove(ResetTokenIdKey);
+        HttpContext.Session.Remove(ResetAttemptsKey);
     }
 
-    // Handles form submission
-    [HttpPost]
-    public IActionResult Login(string username, string password)
+    private IActionResult RedirectToLocal(string? returnUrl)
     {
-        // Add your login logic here
-        if (username == "admin" && password == "password")
+        // Url.IsLocalUrl keeps "returnUrl=https://evil.example" from turning the
+        // login form into an open redirect.
+        if (!string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl))
         {
-            return RedirectToAction("Index", "Home");
+            return Redirect(returnUrl);
         }
-        
-        ViewBag.Error = "Invalid login";
-        return View();
+
+        return RedirectToAction("Index", "Home");
     }
 }
-*/

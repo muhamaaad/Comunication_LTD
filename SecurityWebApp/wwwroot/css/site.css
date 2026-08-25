@@ -29,3 +29,24 @@ body {
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
   text-align: start;
 }
+
+/* Kept here rather than in style="..." attributes, which the
+   Content-Security-Policy blocks. */
+.search-input {
+  min-width: 220px;
+}
+
+.col-id {
+  width: 60px;
+}
+
+.role-select {
+  width: auto;
+  min-width: 9.5rem;
+  display: inline-block;
+}
+
+.policy-subhead {
+  font-size: .8125rem;
+  letter-spacing: .04em;
+}

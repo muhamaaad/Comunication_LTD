@@ -1,73 +1,65 @@
-namespace SecurityWebApp.Helpers;
+using Microsoft.Extensions.Options;
 
-using System.IO;
-using System.Linq;
-using System.Collections.Generic;
-using Microsoft.Extensions.Configuration;
+namespace SecurityWebApp.Helpers;
 
 public class PasswordManager
 {
-    private readonly PasswordRules _rules;
+    private readonly IOptionsMonitor<PasswordRules> _rules;
     private readonly HashSet<string> _commonPasswords = new(StringComparer.OrdinalIgnoreCase);
 
-    public PasswordManager()
+    // Version 1 built its own ConfigurationBuilder here on every request and resolved
+    // the file against the current working directory. The rules now arrive through
+    // the options pattern and the word list is read once, at start-up.
+    public PasswordManager(IOptionsMonitor<PasswordRules> rules, IWebHostEnvironment environment)
     {
-        // Build the configuration pipeline
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("Properties/passwordOptions.json", optional: false, reloadOnChange: true)
-            .Build();
+        _rules = rules;
 
-        // Bind the JSON section directly to the C# object
-        _rules = configuration.GetSection("PasswordRules").Get<PasswordRules>() ?? new PasswordRules();
-        
-        // Load common passwords for dictionary prevention
-        LoadCommonPasswords();
-    }
-
-    private void LoadCommonPasswords()
-    {
-        _commonPasswords.Clear();
-        _commonPasswords.UnionWith(new[]
+        var path = Path.Combine(environment.ContentRootPath, "Properties", "commonPasswords.txt");
+        if (!File.Exists(path))
         {
-            "password", "123456", "password123", "admin", "letmein", "welcome",
-            "monkey", "dragon", "master", "sunshine", "princess", "qwerty",
-            "abc123", "pass123", "12345678", "111111", "1234567", "123123",
-            "test", "user", "root", "toor", "demo", "guest", "test123",
-            "asdfgh", "zxcvbn", "qazwsx", "pass", "login", "hello"
-        });
+            throw new FileNotFoundException(
+                "The common password list is required by PasswordRules.PreventDictionary.", path);
+        }
+
+        _commonPasswords.UnionWith(File.ReadLines(path)
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0 && !line.StartsWith('#')));
     }
+
+    // Read through the monitor so an edit to passwordOptions.json applies immediately.
+    public PasswordRules Rules => _rules.CurrentValue;
 
     public bool IsPasswordStrong(string password, out string errorMessage)
     {
+        var rules = Rules;
         errorMessage = string.Empty;
 
-        if (string.IsNullOrEmpty(password) || password.Length < _rules.RequiredLength)
+        if (string.IsNullOrEmpty(password) || password.Length < rules.RequiredLength)
         {
-            errorMessage = $"Password must be at least {_rules.RequiredLength} characters long.";
+            errorMessage = $"Password must be at least {rules.RequiredLength} characters long.";
             return false;
         }
-        if (_rules.RequireUppercase && !password.Any(char.IsUpper))
+        if (rules.RequireUppercase && !password.Any(char.IsUpper))
         {
             errorMessage = "Password must contain at least one uppercase letter.";
             return false;
         }
-        if (_rules.RequireLowercase && !password.Any(char.IsLower))
+        if (rules.RequireLowercase && !password.Any(char.IsLower))
         {
             errorMessage = "Password must contain at least one lowercase letter.";
             return false;
         }
-        if (_rules.RequireDigit && !password.Any(char.IsDigit))
+        if (rules.RequireDigit && !password.Any(char.IsDigit))
         {
             errorMessage = "Password must contain at least one numeric digit.";
             return false;
         }
-        if (_rules.RequireSpecialCharacter && !password.Any(ch => _rules.AllowedSpecialCharacters.Contains(ch)))
+        if (rules.RequireSpecialCharacter && !password.Any(ch => rules.AllowedSpecialCharacters.Contains(ch)))
         {
-            errorMessage = $"Password must contain at least one special character from: {_rules.AllowedSpecialCharacters}";
+            errorMessage = $"Password must contain at least one special character from: {rules.AllowedSpecialCharacters}";
             return false;
         }
-        if (_rules.PreventDictionary && IsDictionaryWord(password))
+        if (rules.PreventDictionary && IsDictionaryWord(password))
         {
             errorMessage = "Password is too common. Please use a stronger password.";
             return false;
@@ -76,10 +68,17 @@ public class PasswordManager
         return true;
     }
 
+    // Version 1 rejected any password that *contained* a listed word, so "pass",
+    // "test" or "user" anywhere in a long passphrase failed it. Compare the whole
+    // password and its alphabetic core instead, which still catches "Password123!"
+    // without rejecting "Blue7Horse!Coffee".
     private bool IsDictionaryWord(string password)
     {
-        return _commonPasswords.Contains(password) || 
-               _commonPasswords.Any(word => password.Contains(word, StringComparison.OrdinalIgnoreCase));
+        if (_commonPasswords.Contains(password))
+            return true;
+
+        var core = new string(password.Where(char.IsLetter).ToArray());
+        return core.Length > 0 && _commonPasswords.Contains(core);
     }
 
     public bool CheckPasswordHistory(List<string> previousPasswordHashes, string newPassword)

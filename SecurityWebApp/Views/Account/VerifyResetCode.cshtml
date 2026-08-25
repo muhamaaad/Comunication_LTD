@@ -1,77 +1,37 @@
 @{
-    Layout = null;
-    ViewData["Title"] = "Verify Reset Code";
+    ViewData["Title"] = "Verify code";
 }
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verify Code - Comunication_LTD</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-</head>
-<body class="min-h-screen bg-slate-950 text-slate-100">
-<div class="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(6,182,212,0.22),_transparent_35%),linear-gradient(135deg,#0F172A,#111827_50%,#020617)] px-4 py-10">
-    <main class="mx-auto flex min-h-[calc(100vh-5rem)] max-w-5xl items-center justify-center">
-        <section class="w-full max-w-lg rounded-3xl border border-cyan-400/20 bg-slate-900/75 p-8 shadow-2xl shadow-cyan-950/40 backdrop-blur-xl">
-            <div class="mb-8 text-center">
-                <div class="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-cyan-300/30 bg-cyan-400/10 text-cyan-300 shadow-lg shadow-cyan-950/50">
-                    <i class="fa-solid fa-shield-halved text-2xl"></i>
+<div class="row justify-content-center">
+    <div class="col-12 col-md-8 col-lg-6">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                <div class="text-center mb-4">
+                    <h2 class="fw-bold text-dark">Enter verification code</h2>
+                    <p class="text-muted small mb-0">
+                        Check your inbox for the code we sent, then enter it below to continue.
+                    </p>
                 </div>
-                <p class="mb-2 text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300">Secure Recovery</p>
-                <h1 class="text-3xl font-bold tracking-tight text-white">Enter Verification Code</h1>
-                <p class="mt-3 text-sm leading-6 text-slate-300">We've sent a unique verification code to your email. Enter the code below to proceed to password reset.</p>
-            </div>
 
-            @if (!string.IsNullOrEmpty(ViewBag.Success))
-            {
-                <div class="mb-5 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                    <i class="fa-solid fa-circle-check mr-2"></i>@ViewBag.Success
-                </div>
-            }
+                <partial name="_Alerts" />
 
-            @if (!string.IsNullOrEmpty(ViewBag.Error))
-            {
-                <div class="mb-5 rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                    <i class="fa-solid fa-circle-exclamation mr-2"></i>@ViewBag.Error
-                </div>
-            }
-
-            @if (!string.IsNullOrEmpty(ViewBag.ResetCode))
-            {
-                <div class="mb-5 rounded-2xl border border-cyan-400/25 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-100">
-                    <p class="mb-2 font-semibold">Development email simulation:</p>
-                    <code class="break-all font-mono text-xs text-cyan-200">@ViewBag.ResetCode</code>
-                </div>
-            }
-
-            <form method="POST" class="space-y-5">
-                <div>
-                    <label for="resetCode" class="mb-2 block text-sm font-medium text-slate-200">SHA-1 Verification Code / Token</label>
-                    <div class="relative">
-                        <i class="fa-solid fa-lock absolute left-4 top-1/2 -translate-y-1/2 text-slate-500"></i>
-                        <input id="resetCode" name="resetCode" type="text" required maxlength="40" placeholder="40-character SHA-1 token" class="w-full rounded-2xl border border-slate-700 bg-slate-950/70 py-3 pl-11 pr-4 font-mono text-sm tracking-wide text-white outline-none transition placeholder:font-sans placeholder:tracking-normal placeholder:text-slate-500 focus:border-cyan-300 focus:ring-4 focus:ring-cyan-400/15">
+                <form method="post" class="needs-validation" novalidate>
+                    <div class="mb-3">
+                        <label for="resetCode" class="form-label text-secondary small fw-semibold">Verification code</label>
+                        <input type="text" class="form-control font-monospace" id="resetCode" name="resetCode" required
+                               maxlength="40" minlength="40" autocomplete="one-time-code"
+                               placeholder="40-character SHA-1 code">
+                        <div class="invalid-feedback">The code is 40 characters long.</div>
                     </div>
+
+                    <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold">Verify and continue</button>
+                </form>
+
+                <div class="d-flex justify-content-between small mt-4">
+                    <a asp-action="ForgotPassword" class="text-decoration-none">Send a new code</a>
+                    <a asp-action="Login" class="text-decoration-none text-muted">Back to sign in</a>
                 </div>
-
-                <div class="rounded-2xl border border-slate-700 bg-slate-950/50 px-4 py-3 text-sm text-slate-300">
-                    <i class="fa-solid fa-circle-info mr-2 text-cyan-300"></i>Didn't receive the email? Check your spam folder or click Resend.
-                </div>
-
-                <button type="submit" class="group w-full rounded-2xl bg-cyan-400 px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 hover:shadow-lg hover:shadow-cyan-500/25 focus:outline-none focus:ring-4 focus:ring-cyan-400/30">
-                    Verify Code &amp; Proceed
-                    <i class="fa-solid fa-arrow-right ml-2 transition group-hover:translate-x-1"></i>
-                </button>
-            </form>
-
-            <div class="mt-6 flex items-center justify-between text-sm">
-                <a href="/Account/ForgotPassword" class="font-medium text-cyan-300 transition hover:text-cyan-200">Resend Code</a>
-                <a href="/Account/Login" class="font-medium text-slate-400 transition hover:text-slate-200">Back to Login</a>
             </div>
-        </section>
-    </main>
+        </div>
+    </div>
 </div>
-</body>
-</html>

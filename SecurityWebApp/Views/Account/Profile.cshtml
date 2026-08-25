@@ -17,7 +17,7 @@
                     <dd class="col-sm-8">@Model.Email</dd>
 
                     <dt class="col-sm-4 fw-normal text-muted">Role</dt>
-                    <dd class="col-sm-8">@Model.Role</dd>
+                    <dd class="col-sm-8">@(Model.IsAdmin ? "Admin" : "Regular")</dd>
 
                     <dt class="col-sm-4 fw-normal text-muted">Member since</dt>
                     <dd class="col-sm-8">@Model.CreatedAt.ToLocalTime().ToString("dd MMM yyyy")</dd>
